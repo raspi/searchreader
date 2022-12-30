@@ -1,5 +1,5 @@
 # searchreader
-Search io.Reader 
+Search single io.Reader with different io.Reader(s) containing the search byte(s).
 
 ```go
 func main() {
