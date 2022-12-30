@@ -1,6 +1,8 @@
 # searchreader
 Search single io.Reader with different io.Reader(s) containing the search byte(s).
 
+Part of [heksa issue](https://github.com/raspi/heksa/issues/8).
+
 ```go
 func main() {
 	// Source
