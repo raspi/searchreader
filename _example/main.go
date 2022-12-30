@@ -1,7 +1,11 @@
-# searchreader
-Search io.Reader 
+package main
 
-```go
+import (
+	"bytes"
+	"fmt"
+	"github.com/raspi/searchreader"
+)
+
 func main() {
 	// Source
 	src := bytes.NewReader([]byte(`hello, world!`))
@@ -28,4 +32,3 @@ func main() {
 	}
 
 }
-```
