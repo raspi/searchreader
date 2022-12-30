@@ -140,49 +140,43 @@ func (sr *SearcherReader) search() {
 	for matchIndex, startingPositions := range matches {
 		for _, startingPosition := range startingPositions {
 
-			// Iterate through all searchers
-			for searcherIndex, searcher := range sr.searchers {
-				if searcherIndex != matchIndex {
-					// Wrong searcher index, skip
-					continue
-				}
+			searcher := sr.searchers[matchIndex]
 
-				foundSize := uint64(0)
+			foundSize := uint64(0)
 
-				// Rewind searcher to start
-				_, err := searcher.r.Seek(0, io.SeekStart)
+			// Rewind searcher to start
+			_, err := searcher.r.Seek(0, io.SeekStart)
+			if err != nil {
+				panic(err)
+			}
+
+			// Search from where we found the first matching byte
+			for _, bufferByte := range sr.buffer[uint(startingPosition):] {
+				findByte, err := searcher.r.ReadByte()
 				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+
 					panic(err)
 				}
 
-				// Search from where we found the first matching byte
-				for _, bufferByte := range sr.buffer[uint(startingPosition):] {
-					findByte, err := searcher.r.ReadByte()
-					if err != nil {
-						if errors.Is(err, io.EOF) {
-							break
-						}
-
-						panic(err)
-					}
-
-					if findByte == bufferByte {
-						foundSize++
-					}
-
-				}
-
-				if foundSize == searcher.size {
-					// match found
-					sr.matches = append(sr.matches, Result{
-						Index:         searcherIndex,
-						StartPosition: uint(startingPosition),
-						Length:        uint(searcher.size),
-					})
-
+				if findByte == bufferByte {
+					foundSize++
 				}
 
 			}
+
+			if foundSize == searcher.size {
+				// match found
+				sr.matches = append(sr.matches, Result{
+					Index:         matchIndex,
+					StartPosition: uint(startingPosition),
+					Length:        uint(searcher.size),
+				})
+
+			}
+
 		}
 	}
 
