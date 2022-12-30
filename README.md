@@ -38,3 +38,7 @@ found match at position 3 that matches search1
 found match at position 10 that matches search1
 found match at position 2 that matches search2
 ```
+
+## Some goals
+
+* Search strings (ASCII, UTF-8) and be able to search with case (in)sensitivity
