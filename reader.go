@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
+	"unicode"
 )
 
 // Result is search result, see SearcherReader.search()
@@ -15,20 +18,22 @@ type Result struct {
 }
 
 type findThis struct {
-	r         *bytes.Reader // Reader containing what bytes we are searching for
-	firstByte byte          // Quick lookup for first matching byte
-	size      uint64        // Size in bytes
+	r             *strings.Reader // Reader containing what bytes we are searching for
+	firstRune     rune            // Quick lookup for first matching rune
+	size          uint64          // Size in bytes
+	caseSensitive bool            // is search case-sensitive?
 }
 
 type SearcherReader struct {
-	src           *bufio.Reader     // Source io.Reader which is used for search source
-	searchers     map[uint]findThis // What we are searching for
-	requiredBytes uint64            // Minimum buffer size required
-	buffer        []byte
-	matches       []Result
+	src              *bufio.Reader     // Source io.Reader which is used for search source
+	searchers        map[uint]findThis // What we are searching for
+	requiredBytes    uint64            // Minimum buffer size required
+	buffer           []byte            // Internal source buffer for the SearcherReader.searchers
+	matches          []Result          // Matches from SearcherReader.searchers
+	internalPosition uint64
 }
 
-func New(source io.Reader, searchers []*bytes.Reader) (sr *SearcherReader) {
+func New(source io.Reader, opts ...Option) (sr *SearcherReader) {
 
 	sr = &SearcherReader{
 		requiredBytes: 0,
@@ -37,35 +42,48 @@ func New(source io.Reader, searchers []*bytes.Reader) (sr *SearcherReader) {
 		matches:       []Result{},
 	}
 
-	if searchers != nil {
-		for sIdx, s := range searchers {
-			if s == nil {
+	if opts != nil {
+		for sIdx, opt := range opts {
+			if opt == nil {
 				// should this error out?
 				continue
 			}
 
-			if uint64(s.Size()) > sr.requiredBytes {
+			// Default
+			def := &findThis{
+				r:         nil,
+				firstRune: 0,
+				size:      0,
+			}
+
+			// Apply option
+			opt(def)
+
+			if def.r == nil {
+				panic(fmt.Errorf(`nil searcher #%d`, sIdx))
+			}
+
+			def.size = uint64(def.r.Size())
+
+			if def.size > sr.requiredBytes {
 				// Update minimum required bytes required for searching the source SearcherReader.src reader
-				sr.requiredBytes = uint64(s.Size())
+				sr.requiredBytes = def.size
 			}
 
 			// Get first byte as a possible search match hint so that lookup loops are a bit faster
-			firstByte, err := s.ReadByte()
+			firstByte, _, err := def.r.ReadRune()
 			if err != nil {
 				panic(err)
 			}
+			def.firstRune = firstByte
 
 			// Rewind to start
-			_, err = s.Seek(0, io.SeekStart)
+			_, err = def.r.Seek(0, io.SeekStart)
 			if err != nil {
 				panic(err)
 			}
 
-			sr.searchers[uint(sIdx)] = findThis{
-				r:         s,
-				firstByte: firstByte,
-				size:      uint64(s.Size()),
-			}
+			sr.searchers[uint(sIdx)] = *def
 
 		}
 	}
@@ -93,6 +111,7 @@ func (sr *SearcherReader) readActual() (err error) {
 	if err != nil {
 		return err
 	}
+	sr.internalPosition += uint64(readBytes)
 
 	sr.buffer = append(sr.buffer, buffer[0:readBytes]...)
 	return nil
@@ -102,29 +121,54 @@ func (sr *SearcherReader) readActual() (err error) {
 func (sr *SearcherReader) search() {
 
 	if sr.searchers == nil {
+		// No searchers, skip
 		return
 	}
 
 	if len(sr.searchers) == 0 {
+		// No searchers, skip
 		return
 	}
 
 	// key = searcher Index and value(s) are potential match start position(s)
 	matches := make(map[uint][]uint64)
 
+	sourceBuffer := strings.NewReader(string(sr.buffer))
+
 	for searcherIndex, searcher := range sr.searchers {
-		// Search match starts from buffer and limit read size to sr.requiredBytes
-		// this is so that what we are trying to find is contained in first half of the buffer
-		for bIdx, bByte := range sr.buffer {
-			if uint64(bIdx) >= sr.requiredBytes {
-				break
+
+		_, _ = sourceBuffer.Seek(0, io.SeekStart)
+
+		for {
+			offset, err := sourceBuffer.Seek(0, io.SeekCurrent)
+			if err != nil {
+				panic(err)
 			}
 
-			if bByte == searcher.firstByte {
-				// Potential match start
-				matches[searcherIndex] = append(matches[searcherIndex], uint64(bIdx))
+			srcRune, srcSize, err := sourceBuffer.ReadRune()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+
+				panic(err)
+			}
+
+			if srcSize == 0 {
+				panic(`size 0??`)
+			}
+
+			if unicode.IsLetter(srcRune) && !searcher.caseSensitive {
+				// searcher has all letters in lower case if it's case-insensitive.
+				// See: Option.WithCaseInsensitive
+				srcRune = unicode.ToLower(srcRune)
+			}
+
+			if srcRune == searcher.firstRune {
+				matches[searcherIndex] = append(matches[searcherIndex], uint64(offset))
 			}
 		}
+
 	}
 
 	if matches == nil {
@@ -137,22 +181,31 @@ func (sr *SearcherReader) search() {
 		return
 	}
 
+	// Search the potential matches
 	for matchIndex, startingPositions := range matches {
 		for _, startingPosition := range startingPositions {
 
-			searcher := sr.searchers[matchIndex]
-
-			foundSize := uint64(0)
-
-			// Rewind searcher to start
-			_, err := searcher.r.Seek(0, io.SeekStart)
+			// Rewind source buffer to start
+			_, err := sourceBuffer.Seek(int64(startingPosition), io.SeekStart)
 			if err != nil {
 				panic(err)
 			}
 
-			// Search from where we found the first matching byte
-			for _, bufferByte := range sr.buffer[uint(startingPosition):] {
-				findByte, err := searcher.r.ReadByte()
+			searcher, ok := sr.searchers[matchIndex]
+			if !ok {
+				panic(`invalid searcher index`)
+			}
+			foundSize := uint64(0)
+
+			// Rewind searcher to start
+			_, err = searcher.r.Seek(0, io.SeekStart)
+			if err != nil {
+				panic(err)
+			}
+
+			// Search rune-by-rune
+			for {
+				srcRune, srcSize, err := sourceBuffer.ReadRune()
 				if err != nil {
 					if errors.Is(err, io.EOF) {
 						break
@@ -161,8 +214,35 @@ func (sr *SearcherReader) search() {
 					panic(err)
 				}
 
-				if findByte == bufferByte {
+				if srcSize == 0 {
+					panic(`size 0??`)
+				}
+
+				if unicode.IsLetter(srcRune) && !searcher.caseSensitive {
+					// searcher has all letters in lower case if it's case-insensitive.
+					// See: Option.WithCaseInsensitive
+					srcRune = unicode.ToLower(srcRune)
+				}
+
+				findRune, chsize, err := searcher.r.ReadRune()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+
+					panic(err)
+				}
+
+				if chsize == 0 {
+					panic(`size 0??`)
+				}
+
+				if srcSize == chsize && findRune == srcRune {
 					foundSize++
+				} else {
+					// No match
+					foundSize = 0
+					break
 				}
 
 			}
@@ -199,11 +279,15 @@ func (sr *SearcherReader) Read(b []byte) (readBytes int, results []Result, err e
 	}
 
 	if len(sr.searchers) > 0 {
-		// We have searchers
+		// We have searchers, do search
 		sr.search()
 	}
 
 	tmp := bytes.NewReader(sr.buffer)
 	readBytes, err = tmp.Read(b)
+
+	// remove already read data from buffer
+	sr.buffer = sr.buffer[readBytes:]
+
 	return readBytes, sr.matches, err
 }

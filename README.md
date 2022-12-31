@@ -1,21 +1,24 @@
 # searchreader
-Search single io.Reader with different io.Reader(s) containing the search byte(s).
+Search single `bytes.Reader` with different `strings.Reader`(s) containing the search byte(s) or string(s).
 
 Part of [heksa issue](https://github.com/raspi/heksa/issues/8).
 
 ```go
 func main() {
+
 	// Source
-	src := bytes.NewReader([]byte(`hello, world!`))
+	src := bytes.NewReader(
+		[]byte("heLLo, world!\000\000"),
+	)
 
 	// What to search
-	search1 := bytes.NewReader([]byte(`l`))
-	search2 := bytes.NewReader([]byte(`ll`))
+	search1 := strings.NewReader("\000")
+	search2 := strings.NewReader(`ll`)
 
-	var searchList []*bytes.Reader
-	searchList = append(searchList, search1, search2)
-
-	sr := searchreader.New(src, searchList)
+	sr := searchreader.New(src,
+		searchreader.WithCaseSensitive(search1),
+		searchreader.WithCaseInsensitive(search2),
+	)
 
 	buffer := make([]byte, 1024)
 
@@ -26,7 +29,7 @@ func main() {
 	}
 
 	for _, result := range results {
-		fmt.Printf(`found match at position %d that matches search%d`+"\n", result.StartPosition, 1+result.Index)
+		fmt.Printf(`found match at position %d that matches search%d %d`+"\n", result.StartPosition, 1+result.Index, result.Length)
 	}
 
 }
@@ -35,12 +38,11 @@ func main() {
 Outputs:
 
 ```
-found match at position 2 that matches search1
-found match at position 3 that matches search1
-found match at position 10 that matches search1
-found match at position 2 that matches search2
+found match at position 2 that matches search2 2
+found match at position 13 that matches search1 1
+found match at position 14 that matches search1 1
 ```
 
-## Some goals
+## Is it any good?
 
-* Search strings (ASCII, UTF-8) and be able to search with case (in)sensitivity
+Yes.

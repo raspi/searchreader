@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -12,13 +13,13 @@ func TestReader(t *testing.T) {
 	src := bytes.NewReader([]byte(`hello, world!`))
 
 	// What to search
-	search1 := bytes.NewReader([]byte(`l`))
-	search2 := bytes.NewReader([]byte(`ll`))
+	search1 := strings.NewReader(`l`)
+	search2 := strings.NewReader(`ll`)
 
-	var searchList []*bytes.Reader
-	searchList = append(searchList, search1, search2)
-
-	sr := New(src, searchList)
+	sr := New(src,
+		WithCaseSensitive(search1),
+		WithCaseSensitive(search2),
+	)
 
 	buffer := make([]byte, 1024)
 
