@@ -48,9 +48,10 @@ func New(source io.Reader, opts ...Option) (sr *SearcherReader) {
 
 			// Default
 			def := &findThis{
-				r:         nil,
-				firstRune: 0,
-				size:      0,
+				r:             nil,
+				firstRune:     0,
+				size:          0,
+				caseSensitive: false,
 			}
 
 			// Apply option
