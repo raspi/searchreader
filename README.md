@@ -1,4 +1,10 @@
 # searchreader
+
+![GitHub All Releases](https://img.shields.io/github/downloads/raspi/searchreader/total?style=for-the-badge)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/raspi/searchreader?style=for-the-badge)
+![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/raspi/searchreader?style=for-the-badge)
+[![Go Report Card](https://goreportcard.com/badge/github.com/raspi/searchreader)](https://goreportcard.com/report/github.com/raspi/searchreader)
+
 Search single `bytes.Reader` with different `strings.Reader`(s) containing the search byte(s) or string(s).
 
 Part of [heksa issue](https://github.com/raspi/heksa/issues/8).
