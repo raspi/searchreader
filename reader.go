@@ -10,27 +10,25 @@ import (
 	"unicode"
 )
 
-// Result is search result, see SearcherReader.search()
-type Result struct {
-	Index         uint // Index of search []*bytes.Reader given in New
-	StartPosition uint // StartPosition of first matched byte
-	Length        uint // Length
+// Match is search result, see SearcherReader.search().
+type Match struct {
+	Index         uint // Index of search []*bytes.Reader given in New (see: Option)
+	StartPosition uint // StartPosition of first matched byte (relative position of Read())
+	Length        uint // Length in bytes
 }
 
 type findThis struct {
-	r             *strings.Reader // Reader containing what bytes we are searching for
-	firstRune     rune            // Quick lookup for first matching rune
-	size          uint64          // Size in bytes
-	caseSensitive bool            // is search case-sensitive?
+	r             Stream // Reader containing what bytes we are searching for
+	firstRune     rune   // Quick lookup for first matching rune
+	size          uint64 // Size in bytes
+	caseSensitive bool   // is search case-sensitive?
 }
 
 type SearcherReader struct {
-	src              *bufio.Reader     // Source io.Reader which is used for search source
-	searchers        map[uint]findThis // What we are searching for
-	requiredBytes    uint64            // Minimum buffer size required
-	buffer           []byte            // Internal source buffer for the SearcherReader.searchers
-	matches          []Result          // Matches from SearcherReader.searchers
-	internalPosition uint64
+	src           *bufio.Reader     // Source io.Reader which is used for search source
+	searchers     map[uint]findThis // What we are searching for
+	requiredBytes uint64            // Minimum buffer size required
+	buffer        []byte            // Internal source buffer for the SearcherReader.searchers
 }
 
 func New(source io.Reader, opts ...Option) (sr *SearcherReader) {
@@ -39,7 +37,6 @@ func New(source io.Reader, opts ...Option) (sr *SearcherReader) {
 		requiredBytes: 0,
 		src:           bufio.NewReader(source),
 		searchers:     make(map[uint]findThis),
-		matches:       []Result{},
 	}
 
 	if opts != nil {
@@ -91,7 +88,7 @@ func New(source io.Reader, opts ...Option) (sr *SearcherReader) {
 	return sr
 }
 
-// readActual reads from the source io.Reader
+// readActual reads from the source io.Reader to a internal buffer
 func (sr *SearcherReader) readActual() (err error) {
 	if uint64(len(sr.buffer)) > sr.requiredBytes*2 {
 		// We have enough bytes in internal buffer for search, so we don't read more
@@ -109,16 +106,20 @@ func (sr *SearcherReader) readActual() (err error) {
 	buffer := make([]byte, sr.requiredBytes*2)
 	readBytes, err := sr.src.Read(buffer)
 	if err != nil {
-		return err
+		if errors.Is(err, io.EOF) && len(sr.buffer) > 0 {
+			// We have data still in the sr.buffer
+			err = nil
+		}
 	}
-	sr.internalPosition += uint64(readBytes)
 
+	// Add read data from source stream to internal buffer
 	sr.buffer = append(sr.buffer, buffer[0:readBytes]...)
-	return nil
+
+	return err
 }
 
 // search searches each sr.searchers bytes from internal buffer
-func (sr *SearcherReader) search() {
+func (sr *SearcherReader) search() (matches []Match) {
 
 	if sr.searchers == nil {
 		// No searchers, skip
@@ -131,18 +132,25 @@ func (sr *SearcherReader) search() {
 	}
 
 	// key = searcher Index and value(s) are potential match start position(s)
-	matches := make(map[uint][]uint64)
+	potentialMatches := make(map[uint][]uint64)
 
+	// Change raw bytes internal buffer to string so that case-sensitive search can be made
 	sourceBuffer := strings.NewReader(string(sr.buffer))
 
 	for searcherIndex, searcher := range sr.searchers {
 
+		// Rewind to start
 		_, _ = sourceBuffer.Seek(0, io.SeekStart)
 
 		for {
 			offset, err := sourceBuffer.Seek(0, io.SeekCurrent)
 			if err != nil {
 				panic(err)
+			}
+
+			if uint64(offset) > sr.requiredBytes {
+				// Do not search beyond sr.requiredBytes limit
+				break
 			}
 
 			srcRune, srcSize, err := sourceBuffer.ReadRune()
@@ -165,33 +173,34 @@ func (sr *SearcherReader) search() {
 			}
 
 			if srcRune == searcher.firstRune {
-				matches[searcherIndex] = append(matches[searcherIndex], uint64(offset))
+				// Add potential start for match start
+				potentialMatches[searcherIndex] = append(potentialMatches[searcherIndex], uint64(offset))
 			}
 		}
 
 	}
 
-	if matches == nil {
+	if potentialMatches == nil {
 		// No matches
 		return
 	}
 
-	if len(matches) == 0 {
+	if len(potentialMatches) == 0 {
 		// No matches
 		return
 	}
 
 	// Search the potential matches
-	for matchIndex, startingPositions := range matches {
+	for searcherIndex, startingPositions := range potentialMatches {
 		for _, startingPosition := range startingPositions {
 
-			// Rewind source buffer to start
+			// Rewind source buffer to starting position of potential match
 			_, err := sourceBuffer.Seek(int64(startingPosition), io.SeekStart)
 			if err != nil {
 				panic(err)
 			}
 
-			searcher, ok := sr.searchers[matchIndex]
+			searcher, ok := sr.searchers[searcherIndex]
 			if !ok {
 				panic(`invalid searcher index`)
 			}
@@ -249,8 +258,8 @@ func (sr *SearcherReader) search() {
 
 			if foundSize == searcher.size {
 				// match found
-				sr.matches = append(sr.matches, Result{
-					Index:         matchIndex,
+				matches = append(matches, Match{
+					Index:         searcherIndex,
 					StartPosition: uint(startingPosition),
 					Length:        uint(searcher.size),
 				})
@@ -260,10 +269,12 @@ func (sr *SearcherReader) search() {
 		}
 	}
 
+	return matches
 }
 
-// Read reads internal buffer and returns bytes from the internal buffer's start and possible matches
-func (sr *SearcherReader) Read(b []byte) (readBytes int, results []Result, err error) {
+// Read reads internal buffer and returns bytes from the internal buffer's start and possible matches.
+// End user has to keep track of matching Match data lengths.
+func (sr *SearcherReader) Read(b []byte) (readBytes int, matches []Match, err error) {
 	if uint64(len(b)) > sr.requiredBytes {
 		sr.requiredBytes = uint64(len(b))
 	}
@@ -280,7 +291,7 @@ func (sr *SearcherReader) Read(b []byte) (readBytes int, results []Result, err e
 
 	if len(sr.searchers) > 0 {
 		// We have searchers, do search
-		sr.search()
+		matches = sr.search()
 	}
 
 	tmp := bytes.NewReader(sr.buffer)
@@ -289,5 +300,5 @@ func (sr *SearcherReader) Read(b []byte) (readBytes int, results []Result, err e
 	// remove already read data from buffer
 	sr.buffer = sr.buffer[readBytes:]
 
-	return readBytes, sr.matches, err
+	return readBytes, matches, err
 }

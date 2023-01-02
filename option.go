@@ -2,21 +2,36 @@ package searchreader
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"unicode"
 )
 
+type Stream interface {
+	io.ReadSeeker
+	io.RuneReader
+	Size() int64
+}
+
 type Option func(this *findThis)
 
-func WithCaseSensitive(source *strings.Reader) Option {
+func WithCaseSensitive(source Stream) Option {
+	if source == nil {
+		panic(fmt.Errorf(`nil source`))
+	}
+
 	return func(r *findThis) {
 		r.r = source
 		r.caseSensitive = true
 	}
 }
 
-func WithCaseInsensitive(source *strings.Reader) Option {
+func WithCaseInsensitive(source Stream) Option {
+	if source == nil {
+		panic(fmt.Errorf(`nil source`))
+	}
+
 	return func(r *findThis) {
 		// Change all letters to lower case
 
