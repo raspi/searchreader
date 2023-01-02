@@ -113,7 +113,9 @@ func (sr *SearcherReader) readActual() (err error) {
 	}
 
 	// Add read data from source stream to internal buffer
-	sr.buffer = append(sr.buffer, buffer[0:readBytes]...)
+	if readBytes > 0 {
+		sr.buffer = append(sr.buffer, buffer[0:readBytes]...)
+	}
 
 	return err
 }
@@ -273,20 +275,17 @@ func (sr *SearcherReader) search() (matches []Match) {
 }
 
 // Read reads internal buffer and returns bytes from the internal buffer's start and possible matches.
-// End user has to keep track of matching Match data lengths.
+// End user has to keep track of matching Match data lengths search window.
 func (sr *SearcherReader) Read(b []byte) (readBytes int, matches []Match, err error) {
 	if uint64(len(b)) > sr.requiredBytes {
+		// Update sr.requiredBytes if it's larger than search string(s)
 		sr.requiredBytes = uint64(len(b))
 	}
 
 	// Read to internal buffer
 	err = sr.readActual()
 	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return 0, nil, err
-		}
-
-		panic(err)
+		return 0, matches, err
 	}
 
 	if len(sr.searchers) > 0 {
