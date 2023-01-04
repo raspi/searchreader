@@ -51,7 +51,7 @@ found match at position 14 that matches search1 1
 
 ## Some goals
 
-* Convert searched string(s) into different encodings such as ISO-8859-1 and ISO-8859-15 so that you can search more efficiently at once
+* Convert searched string(s) into different encodings such as UTF-8, ISO-8859-1 and ISO-8859-15 so that you can search more efficiently at once
 
 ## Is it any good?
 
